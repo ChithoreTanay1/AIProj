@@ -1,0 +1,28 @@
+# Paths are relative to the project root (mobility-pollution-correlation/).
+monitoring_dir: "../monitoring_2026-05-21_2026-06-19"
+dkv_dir: "data/dkv"
+outputs_dir: "outputs"
+
+# Radius (km) around each KER sensor station within which DKV stops/trips
+# count as "serving" that station. 0.5km = ~6-7 minute walk.
+radius_km: 0.5
+
+# Air quality metrics to analyze (must match the 'Merőeszköz' values in the
+# Levego.xlsx files).
+pollutants:
+  - "PM2.5"
+  - "PM10"
+  - "NO2"
+  - "NOx"
+  - "CO"
+  - "O3"
+
+# Noise metrics (only 5 of the 16 stations have these).
+noise_metrics:
+  - "LAEQ nappali"
+  - "LAEQ éjszakai"
+
+# Transit exposure metrics computed in geo_utils.compute_transit_exposure.
+transit_metrics:
+  - "stop_count"
+  - "trips_per_day"
