@@ -31,7 +31,7 @@ We're doing the **Demo Competition**, specifically the **urban/environmental mon
 5. Fit a simple regression to quantify the relationship and rank stations/zones by "transit access vs. pollution burden."
 6. Visualize as a station-ranked map + scatter plots + correlation summary — demo and PR material.
 
-**Implementation:** `mobility-pollution-correlation/` project folder in this directory. See `mobility-pollution-correlation/instructions.md` for how to run it. The pipeline currently runs end-to-end on the real KER monitoring data; the DKV loader (`src/load_dkv.py`) is schema-flexible (supports GTFS-style stops.txt/routes.txt/trips.txt/stop_times.txt, or a generic CSV/XLSX with lat/lon columns) and degrades gracefully — it reports "monitoring-only" results until real DKV files are dropped into `data/dkv/`.
+**Implementation:** `mobility-pollution-correlation/` project folder in this directory. See `mobility-pollution-correlation/instructions.md` for how to run it. The pipeline runs end-to-end on real data now: real KER monitoring readings, and (as of 2026-07-19) the real DKV export — "List of bus stops.xlsx" (687 platforms, lat/lon) joined with monthly "Summary stop statistics" (per-stop passenger frequency, used as a trips_per_day proxy). Both live in `mobility-pollution-correlation/data/dkv/`. `src/load_dkv.py` still keeps GTFS-style and generic CSV/XLSX parsing as fallbacks. Not wired in: the 236MB "Enclod archive data" raw GPS pings (left in the top-level `DKV databases/` folder, too large for git, not needed for the current stop-level exposure calc) and `Service Schedule.xlsx` / `Summary line statistics` (route/line-level, not yet parsed).
 
 ### Other data sources discovered (not yet all wired into the pipeline)
 - **Cívis GIStory** (civisgistory.hu) — historical GIS maps/data of Debrecen, 19th century onward (Time Trail, Timeframes Comparator, Thematic Walks, 1870 Thematic Database). Held in reserve for the land-use-change alternative.
@@ -41,7 +41,8 @@ We're doing the **Demo Competition**, specifically the **urban/environmental mon
 - **National reference/baseline data**: HungaroMet air quality network (legszennyezettseg.met.hu), OVF groundwater well network with 30-year baseline (geoportal.vizugy.hu/talajvizkutak), HungaroMet climate/weather archive (odp.met.hu), soil data hub incl. historical Kreybig soil maps (talaj-teradat.hu).
 
 ## Open Questions / Next Steps
-- **Get the actual DKV dataset file and its schema** — this is the critical blocker for the chosen project. Once obtained, drop it into `mobility-pollution-correlation/data/dkv/` and adjust `src/load_dkv.py` if the real format differs from the assumed GTFS-like structure.
+- ~~Get the actual DKV dataset file and its schema~~ — done 2026-07-19. Real export loaded and pipeline verified end-to-end (16 stations, all with non-trivial stop_count/trips_per_day; correlations computing real r/p values, e.g. trips_per_day vs PM10 r=0.83, p<0.001 — worth digging into whether that's a genuine signal or confounded by station siting before it goes in the pitch).
+- Consider parsing `Service Schedule.xlsx` for a true scheduled-trips-per-stop count, as a cross-check against the passenger-frequency proxy currently used for `trips_per_day`.
 - Decide whether to pull in HungaroMet's national air-quality data as an external baseline/sanity-check for the KER station readings.
 - Define concrete, measurable output claims for the pitch (e.g., "stations within Xm of Y+ daily transit trips show Z% lower NO2").
 - Decide track: submit as Idea (concept-only, due Sept 4) vs. Demo (working prototype, due Sept 25) — currently building toward Demo.
