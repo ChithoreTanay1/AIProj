@@ -1,34 +1,23 @@
 """Load DKV Debrecen Transport Ltd. data.
 
-The real DKV export (DEIK.AI Challenge 2026) lives in data/dkv/:
-    "List of bus stops.xlsx"           one row per platform, with a combined
-                                        "Coordinates" column ("lon, lat")
-    "Summary stop statistics/<year>/<month>.xlsx"
-                                        monthly per-stop boarding/alighting
-                                        counts, keyed by stop name (multi-row
-                                        header, data starts at row 9)
-    "Service Schedule.xlsx"            route/trip level departure schedule
-                                        (not currently parsed — see below)
+The real export lives in data/dkv/. Main file is "List of bus stops.xlsx" —
+687 platforms, coordinates packed into one "Coordinates" column as
+"lon, lat". We join that against the monthly "Summary stop statistics"
+exports to get a rough passenger-frequency number per stop name, which is
+what we use as a trips_per_day stand-in since there's no real published
+schedule/frequency file. "Service Schedule.xlsx" also exists but isn't
+parsed yet.
 
-`_load_bus_stops_export` reads the stop list for geometry and joins in an
-average passenger-frequency figure (as a trips_per_day proxy) from the
-Summary stop statistics files, matched on stop name.
+Kept two older guesses at the schema around as fallbacks, in case DKV ever
+ships something else:
 
-Two older *assumed* schemas are kept as fallbacks for portability (e.g. if
-DKV ever ships a GTFS export instead), and the loader still degrades
-gracefully to an empty result (monitoring-only mode) if nothing recognizable
-is found:
+- GTFS style (stops.txt, optionally routes/trips/stop_times.txt) — the
+  format most transit agencies actually export.
+- a generic CSV/XLSX with lat/lon-ish column names.
 
-Fallback schema 1 — GTFS-style (standard for public transit agencies):
-    data/dkv/stops.txt       stop_id, stop_name, stop_lat, stop_lon
-    data/dkv/routes.txt      route_id, route_short_name, route_long_name
-    data/dkv/trips.txt       trip_id, route_id
-    data/dkv/stop_times.txt  trip_id, stop_id, arrival_time
-    (stop_times + trips together let us compute scheduled trips/day per stop)
-
-Fallback schema 2 — generic flat export (CSV or XLSX):
-    a single file with columns whose names contain "lat"/"lon" (or "lng")
-    for stop coordinates, and optionally a trip-count-like column.
+If nothing matches any of these, load_dkv_stops just hands back an empty
+frame and the rest of the pipeline keeps running in monitoring-only mode
+instead of crashing.
 """
 import glob
 import os
@@ -70,8 +59,8 @@ def _load_gtfs_style(dkv_dir: str) -> pd.DataFrame:
 
 
 def _parse_coordinates(series: pd.Series):
-    """Split a "lon, lat" string column (DKV's "Coordinates" format) into
-    separate numeric lat/lon series."""
+    """DKV packs coordinates as a single "lon, lat" string — split that
+    into two numeric columns."""
     parts = series.astype(str).str.split(",", n=1, expand=True)
     lon = pd.to_numeric(parts[0], errors="coerce")
     lat = pd.to_numeric(parts[1], errors="coerce") if parts.shape[1] > 1 else pd.Series(
@@ -81,14 +70,13 @@ def _parse_coordinates(series: pd.Series):
 
 
 def _load_stop_passenger_frequency(dkv_dir: str) -> pd.Series:
-    """Average monthly passenger frequency (boardings + alightings) per stop
-    name, from "Summary stop statistics/<year>/<month>.xlsx" exports. Used
-    as a trips_per_day-like transit-exposure signal.
+    """Average monthly passenger frequency (boardings + alightings) per
+    stop name, from the Summary stop statistics exports — our stand-in
+    for trips_per_day.
 
-    Each file has a multi-row header (data starts at row index 8) with
-    columns: Ident., Name, Planned stopping (APC, All), IN (Σ, Ø),
-    OUT (Σ, Ø), Frequency of passengers (Σ, Ø), Occupancy..., Delay.
-    Column 1 is Name, column 8 is Frequency of passengers Σ.
+    These sheets have a messy multi-row header, so the real data only
+    starts at row 9. Column 1 ends up being the stop name, column 8 the
+    total passenger frequency, once read with skiprows=8.
     """
     pattern = os.path.join(dkv_dir, "Summary stop statistics", "*", "*.xlsx")
     frames = []
@@ -111,8 +99,8 @@ def _load_stop_passenger_frequency(dkv_dir: str) -> pd.Series:
 
 
 def _load_bus_stops_export(dkv_dir: str) -> pd.DataFrame:
-    """Parse DKV's real "List of bus stops.xlsx" export: one row per
-    platform, with a combined "Coordinates" column ("lon, lat")."""
+    """Parse the real "List of bus stops.xlsx" export — one row per
+    platform, coordinates packed into a single "lon, lat" column."""
     df = pd.read_excel(os.path.join(dkv_dir, BUS_STOPS_FILE))
     lat, lon = _parse_coordinates(df["Coordinates"])
     out = pd.DataFrame(

@@ -1,14 +1,13 @@
-"""Multivariate ML: predict pollutant levels from transit exposure + weather
-together, instead of the one-metric-at-a-time correlations in correlate.py.
+"""Predict pollutant levels from transit exposure + weather together,
+instead of one variable at a time like correlate.py does.
 
-With only ~16 stations, a single train/test split is meaningless (test set
-of 2-3 points, huge variance) — so every model is scored with leave-one-out
-cross-validation (fit on 15, predict the 1 held out, repeat for each
-station) to get an honest, if noisy, out-of-sample estimate. Each model is
-also compared against a trivial "always predict the mean" baseline, since
-with this little data a Random Forest can easily do *worse* than the
-baseline — that comparison is the real signal of whether the model learned
-anything, not the R2 alone.
+Only ~16 stations means a normal train/test split is pretty much useless —
+you'd be testing on 2-3 points. So everything here runs through
+leave-one-out CV instead: fit on 15 stations, predict the one left out,
+repeat for each station in turn. Every model also gets checked against
+just guessing the mean, because with this little data a Random Forest can
+easily do worse than that — and that comparison tells you more than the R2
+on its own does.
 """
 import numpy as np
 import pandas as pd
@@ -37,12 +36,12 @@ def train_pollutant_models(
     Returns (performance_df, importance_df):
       performance_df: pollutant, n, loocv_r2, loocv_rmse,
                        baseline_rmse_mean_predictor, beats_mean_baseline
-      importance_df:  pollutant, feature, importance (from a model refit on
-                       all stations, for interpretability only — not the
-                       same model used for the LOOCV scores)
+      importance_df:  pollutant, feature, importance — from a model fit on
+                       all the data at once, just for interpretability
+                       (not the same models used to get the LOOCV scores)
 
-    Skips a pollutant if fewer than 6 stations have complete feature+target
-    data (not enough for LOOCV to mean anything).
+    Skips a pollutant if fewer than 6 stations have everything filled in —
+    below that, LOOCV doesn't really tell you anything.
     """
     feature_cols = feature_cols or FEATURE_COLS
     rf_kwargs = dict(n_estimators=200, max_depth=3)

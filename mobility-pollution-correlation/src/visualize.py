@@ -92,9 +92,9 @@ def plot_interpolated_surface(merged: pd.DataFrame, pollutant: str, outputs_dir:
 
 
 def _render_surface_raster(grid_values: np.ndarray, path: str, alpha: float = 0.6) -> None:
-    """Render an IDW grid as a transparent PNG for a folium ImageOverlay.
-    Row 0 of grid_values is the southernmost row, but image row 0 is the
-    top of the picture, so it must be flipped to align north-up.
+    """Render the IDW grid to a transparent PNG for folium's ImageOverlay.
+    Grid row 0 is the south edge, but image row 0 is the top of the
+    picture — flip it or the map ends up upside down.
     """
     cmap = matplotlib.colormaps["YlOrRd"]
     vmin, vmax = np.nanmin(grid_values), np.nanmax(grid_values)
