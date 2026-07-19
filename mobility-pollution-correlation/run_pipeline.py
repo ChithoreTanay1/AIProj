@@ -21,7 +21,13 @@ from src.load_monitoring import (
     load_station_metadata,
     station_pollutant_summary,
 )
-from src.visualize import build_station_map, plot_pollutant_by_station, plot_transit_vs_pollutant
+from src.ml_model import train_pollutant_models
+from src.visualize import (
+    build_station_map,
+    plot_interpolated_surface,
+    plot_pollutant_by_station,
+    plot_transit_vs_pollutant,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -48,7 +54,7 @@ def main():
     os.makedirs(outputs_dir, exist_ok=True)
 
     print("=" * 70)
-    print("STEP 1/5: Loading KER monitoring station metadata + readings")
+    print("STEP 1/6: Loading KER monitoring station metadata + readings")
     print("=" * 70)
     stations = load_station_metadata(monitoring_dir)
     air = load_air_quality(monitoring_dir)
@@ -58,7 +64,7 @@ def main():
 
     print()
     print("=" * 70)
-    print("STEP 2/5: Loading DKV transport data")
+    print("STEP 2/6: Loading DKV transport data")
     print("=" * 70)
     dkv_available = is_dkv_data_available(dkv_dir)
     stops = load_dkv_stops(dkv_dir)
@@ -66,13 +72,13 @@ def main():
 
     print()
     print("=" * 70)
-    print(f"STEP 3/5: Computing transit exposure (radius = {radius_km} km)")
+    print(f"STEP 3/6: Computing transit exposure (radius = {radius_km} km)")
     print("=" * 70)
     transit_exposure = compute_transit_exposure(stations, stops, radius_km)
 
     print()
     print("=" * 70)
-    print("STEP 4/5: Correlating transit exposure with pollution/noise")
+    print("STEP 4/6: Correlating transit exposure with pollution/noise")
     print("=" * 70)
     merged = merge_station_transit(pollutant_summary, transit_exposure, stations)
     merged.to_csv(os.path.join(outputs_dir, "station_summary.csv"), index=False)
@@ -102,7 +108,25 @@ def main():
 
     print()
     print("=" * 70)
-    print("STEP 5/5: Generating charts and map")
+    print("STEP 5/6: Multivariate ML — predicting pollutants from transit + weather")
+    print("=" * 70)
+    ml_perf, ml_importance = train_pollutant_models(merged, target_metrics)
+    if not ml_perf.empty:
+        ml_perf.to_csv(os.path.join(outputs_dir, "ml_model_performance.csv"), index=False)
+        ml_importance.to_csv(os.path.join(outputs_dir, "ml_feature_importance.csv"), index=False)
+        n_beat = int(ml_perf["beats_mean_baseline"].sum())
+        print(f"  Wrote outputs/ml_model_performance.csv ({len(ml_perf)} pollutant models)")
+        print(f"  Wrote outputs/ml_feature_importance.csv")
+        print(
+            f"  {n_beat}/{len(ml_perf)} models beat the 'always predict the mean' baseline "
+            "under leave-one-out CV (expected to be a low bar — only ~16 stations)."
+        )
+    else:
+        print("  Skipped: not enough stations with complete transit+weather+pollutant data.")
+
+    print()
+    print("=" * 70)
+    print("STEP 6/6: Generating charts, IDW surfaces, and map")
     print("=" * 70)
     made = []
     for p in target_metrics:
@@ -114,9 +138,15 @@ def main():
             path = plot_transit_vs_pollutant(merged, t_col, p_col, outputs_dir)
             if path:
                 made.append(path)
+    for p in target_metrics:
+        path = plot_interpolated_surface(merged, p, outputs_dir)
+        if path:
+            made.append(path)
     map_color_metric = "PM2.5" if "PM2.5" in merged.columns else (target_metrics[0] if target_metrics else None)
     if map_color_metric:
-        map_path = build_station_map(merged, stops, outputs_dir, color_by=map_color_metric)
+        map_path = build_station_map(
+            merged, stops, outputs_dir, color_by=map_color_metric, surface_pollutant=map_color_metric
+        )
         if map_path:
             made.append(map_path)
     print(f"  Wrote {len(made)} files to {outputs_dir}")

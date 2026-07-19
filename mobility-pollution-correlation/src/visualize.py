@@ -5,7 +5,10 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless-safe, no display needed
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+
+from src.interpolate import idw_grid
 
 
 def plot_pollutant_by_station(merged: pd.DataFrame, pollutant: str, outputs_dir: str) -> str:
@@ -60,10 +63,58 @@ def plot_transit_vs_pollutant(
     return path
 
 
-def build_station_map(merged: pd.DataFrame, stops_df: pd.DataFrame, outputs_dir: str, color_by: str) -> str:
+def plot_interpolated_surface(merged: pd.DataFrame, pollutant: str, outputs_dir: str) -> str:
+    """Static IDW-interpolated pollution surface (filled contour) with
+    station points overlaid, for the report/pitch deck."""
+    valid = merged.dropna(subset=["lat", "lon", pollutant])
+    if len(valid) < 3:
+        return ""
+
+    grid_lats, grid_lons, grid_values = idw_grid(
+        valid["lat"].to_numpy(), valid["lon"].to_numpy(), valid[pollutant].to_numpy()
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 7))
+    contour = ax.contourf(grid_lons, grid_lats, grid_values, levels=20, cmap="YlOrRd")
+    fig.colorbar(contour, ax=ax, label=pollutant)
+    ax.scatter(valid["lon"], valid["lat"], c="black", s=20, zorder=3)
+    for _, row in valid.iterrows():
+        ax.annotate(row["station_id"].replace("DEB-", ""), (row["lon"], row["lat"]), fontsize=7, zorder=4)
+    ax.set_title(f"IDW-interpolated {pollutant} surface ({len(valid)} stations)")
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    plt.tight_layout()
+
+    path = os.path.join(outputs_dir, f"surface_{pollutant.replace('/', '-').replace(' ', '_')}.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def _render_surface_raster(grid_values: np.ndarray, path: str, alpha: float = 0.6) -> None:
+    """Render an IDW grid as a transparent PNG for a folium ImageOverlay.
+    Row 0 of grid_values is the southernmost row, but image row 0 is the
+    top of the picture, so it must be flipped to align north-up.
+    """
+    cmap = matplotlib.colormaps["YlOrRd"]
+    vmin, vmax = np.nanmin(grid_values), np.nanmax(grid_values)
+    norm = (grid_values - vmin) / (vmax - vmin) if vmax > vmin else np.zeros_like(grid_values)
+    rgba = cmap(norm)
+    rgba[..., 3] = alpha
+    plt.imsave(path, np.flipud(rgba))
+
+
+def build_station_map(
+    merged: pd.DataFrame,
+    stops_df: pd.DataFrame,
+    outputs_dir: str,
+    color_by: str,
+    surface_pollutant: str = None,
+) -> str:
     """Interactive folium map: stations colored by `color_by` value, DKV stops
-    overlaid as small markers if available. Falls back to a plain station
-    map if folium isn't installed.
+    overlaid as small markers if available, plus an IDW-interpolated
+    pollution surface layer (toggleable) if `surface_pollutant` is given.
+    Falls back to a plain station map if folium isn't installed.
     """
     try:
         import folium
@@ -78,11 +129,27 @@ def build_station_map(merged: pd.DataFrame, stops_df: pd.DataFrame, outputs_dir:
     center = [valid["lat"].mean(), valid["lon"].mean()]
     fmap = folium.Map(location=center, zoom_start=12, tiles="cartodbpositron")
 
+    surface_pollutant = surface_pollutant if surface_pollutant and surface_pollutant in valid.columns else None
+    surface_valid = valid.dropna(subset=[surface_pollutant]) if surface_pollutant else valid.iloc[0:0]
+    if surface_pollutant and len(surface_valid) >= 3:
+        grid_lats, grid_lons, grid_values = idw_grid(
+            surface_valid["lat"].to_numpy(), surface_valid["lon"].to_numpy(), surface_valid[surface_pollutant].to_numpy()
+        )
+        raster_path = os.path.join(outputs_dir, f"_surface_raster_{surface_pollutant.replace('/', '-').replace(' ', '_')}.png")
+        _render_surface_raster(grid_values, raster_path)
+        folium.raster_layers.ImageOverlay(
+            image=raster_path,
+            bounds=[[grid_lats.min(), grid_lons.min()], [grid_lats.max(), grid_lons.max()]],
+            opacity=1.0,  # transparency is already baked into the PNG's alpha channel
+            name=f"{surface_pollutant} surface (IDW estimate)",
+        ).add_to(fmap)
+
     if color_by in valid.columns and valid[color_by].notna().any():
         vmin, vmax = valid[color_by].min(), valid[color_by].max()
     else:
         vmin, vmax = None, None
 
+    stations_layer = folium.FeatureGroup(name="Monitoring stations", show=True)
     for _, row in valid.iterrows():
         value = row.get(color_by)
         if vmin is not None and vmax is not None and pd.notna(value) and vmax > vmin:
@@ -99,9 +166,11 @@ def build_station_map(merged: pd.DataFrame, stops_df: pd.DataFrame, outputs_dir:
             fill_color=color,
             fill_opacity=0.85,
             popup=popup,
-        ).add_to(fmap)
+        ).add_to(stations_layer)
+    stations_layer.add_to(fmap)
 
     if not stops_df.empty:
+        stops_layer = folium.FeatureGroup(name="DKV bus stops", show=True)
         for _, stop in stops_df.iterrows():
             folium.CircleMarker(
                 location=[stop["stop_lat"], stop["stop_lon"]],
@@ -109,7 +178,10 @@ def build_station_map(merged: pd.DataFrame, stops_df: pd.DataFrame, outputs_dir:
                 color="#555555",
                 fill=True,
                 fill_opacity=0.5,
-            ).add_to(fmap)
+            ).add_to(stops_layer)
+        stops_layer.add_to(fmap)
+
+    folium.LayerControl(collapsed=False).add_to(fmap)
 
     path = os.path.join(outputs_dir, "station_map.html")
     fmap.save(path)
